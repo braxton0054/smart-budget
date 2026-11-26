@@ -1,6 +1,7 @@
 import "server-only";
 import { redirect } from "next/navigation";
 import { auth } from "@/auth";
+import { currentEntitlement } from "@/lib/billing/subscriptions";
 import { prisma } from "@/lib/prisma";
 
 export async function requireSuperadmin() {
@@ -26,4 +27,13 @@ export async function ownedShopForApi(shopId: string) {
   const shop = user?.shops.find((item) => item.id === shopId);
   if (!shop) return { error: 404 as const };
   return { shop };
+}
+
+/** Shop + active plan check for features that must stay behind billing. */
+export async function entitledShopForApi(shopId: string) {
+  const owned = await ownedShopForApi(shopId);
+  if ("error" in owned) return owned;
+  const entitlement = await currentEntitlement(owned.shop.id);
+  if (!entitlement) return { error: 403 as const, reason: "NO_PLAN" as const };
+  return { shop: owned.shop, entitlement };
 }

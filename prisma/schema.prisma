@@ -41,6 +41,11 @@ enum PaymentStatus {
   REVERSED
 }
 
+enum PaymentKind {
+  ORDER
+  SUBSCRIPTION
+}
+
 enum OrderStatus {
   PENDING
   CONFIRMED
@@ -169,8 +174,9 @@ model ShopSubscription {
   tokensUsed         Int                @default(0)
   createdAt          DateTime           @default(now())
 
-  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  plan Plan @relation(fields: [planId], references: [id])
+  shop     Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  plan     Plan      @relation(fields: [planId], references: [id])
+  payments Payment[]
 
   @@index([shopId])
   @@index([status])
@@ -191,24 +197,24 @@ model WaSession {
   updatedAt   DateTime        @updatedAt
 
   // OpenWA identity and credentials (ciphertext/iv/authTag are base64 strings).
-  openwaSessionId String? @unique
-  apiKeyId        String?
-  apiKeyCiphertext String?
-  apiKeyIv         String?
-  apiKeyAuthTag    String?
-  webhookId        String?
-  webhookTokenHash String? @unique
+  openwaSessionId         String? @unique
+  apiKeyId                String?
+  apiKeyCiphertext        String?
+  apiKeyIv                String?
+  apiKeyAuthTag           String?
+  webhookId               String?
+  webhookTokenHash        String? @unique
   webhookSecretCiphertext String?
   webhookSecretIv         String?
   webhookSecretAuthTag    String?
 
   // Encrypted Baileys multi-file auth state, mirrored from the shared volume
   // into Postgres by the wa-state-sync sidecar.
-  stateCiphertext String?
-  stateIv         String?
-  stateAuthTag    String?
+  stateCiphertext  String?
+  stateIv          String?
+  stateAuthTag     String?
   stateFingerprint String?
-  stateUpdatedAt  DateTime?
+  stateUpdatedAt   DateTime?
 
   // Last status observed from the gateway and any engine-side restriction.
   openwaStatus String?
@@ -224,13 +230,13 @@ model WaSession {
 // Platform-level keys used to collect owner subscription payments.
 // Distinct from PaymentCredential, which holds each shop's payout keys.
 model PlatformCredential {
-  id        String   @id @default(cuid())
-  key       String   @unique
+  id         String   @id @default(cuid())
+  key        String   @unique
   ciphertext String
-  iv        String
-  authTag   String
-  isActive  Boolean  @default(true)
-  updatedAt DateTime @updatedAt
+  iv         String
+  authTag    String
+  isActive   Boolean  @default(true)
+  updatedAt  DateTime @updatedAt
 }
 
 model PaymentCredential {
@@ -422,24 +428,29 @@ model Invoice {
 }
 
 model Payment {
-  id              String          @id @default(cuid())
-  shopId          String
-  orderId         String?
-  invoiceId       String?
-  provider        PaymentProvider
-  providerRef     String?
-  amount          Int
-  status          PaymentStatus   @default(PENDING)
-  callbackPayload Json?
-  createdAt       DateTime        @default(now())
-  confirmedAt     DateTime?
+  id                 String          @id @default(cuid())
+  shopId             String
+  orderId            String?
+  invoiceId          String?
+  shopSubscriptionId String?
+  kind               PaymentKind     @default(ORDER)
+  provider           PaymentProvider
+  providerRef        String?
+  externalReference  String?         @unique
+  amount             Int
+  status             PaymentStatus   @default(PENDING)
+  callbackPayload    Json?
+  createdAt          DateTime        @default(now())
+  confirmedAt        DateTime?
 
-  shop    Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
-  order   Order?   @relation(fields: [orderId], references: [id])
-  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+  shop             Shop              @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  order            Order?            @relation(fields: [orderId], references: [id])
+  invoice          Invoice?          @relation(fields: [invoiceId], references: [id])
+  shopSubscription ShopSubscription? @relation(fields: [shopSubscriptionId], references: [id], onDelete: SetNull)
 
   @@index([shopId, createdAt])
   @@index([providerRef])
+  @@index([shopSubscriptionId])
 }
 
 model Delivery {

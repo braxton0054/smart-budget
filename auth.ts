@@ -5,6 +5,7 @@ import Credentials from "next-auth/providers/credentials";
 import Google from "next-auth/providers/google";
 import { prisma } from "@/lib/prisma";
 import { ensureShopForUser } from "@/lib/shop-provisioning";
+import { isSuperadminEmail } from "@/lib/superadmin";
 
 const roleForEmail = cache(async (email: string) =>
   prisma.user.findUnique({ where: { email: email.toLowerCase() }, select: { role: true } }),
@@ -30,8 +31,8 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
         if (!email || !password) return null;
 
         const user = await prisma.user.findUnique({ where: { email } });
-        // Superadmin and Google-only accounts have no password hash.
-        if (!user?.passwordHash) return null;
+        // Superadmin is Google-only even if a legacy password hash exists.
+        if (!user?.passwordHash || user.role === "SUPERADMIN" || isSuperadminEmail(email)) return null;
         const matches = await bcrypt.compare(password, user.passwordHash);
         if (!matches) return null;
 
@@ -56,19 +57,15 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
   events: {
     async signIn({ user }) {
       if (!user.email) return;
-      const adminEmails = (process.env.SUPERADMIN_EMAIL ?? "")
-        .split(",")
-        .map((email) => email.trim().toLowerCase())
-        .filter(Boolean);
       const email = user.email.toLowerCase();
-      const role = adminEmails.includes(email) ? "SUPERADMIN" : "SHOP_OWNER";
+      const role = isSuperadminEmail(email) ? "SUPERADMIN" : "SHOP_OWNER";
       const record = await prisma.user.upsert({
         where: { email },
         update: { name: user.name ?? undefined, image: user.image ?? undefined, role },
         create: { email, name: user.name, image: user.image, role },
       });
       // Google sign-ins (and any owner restored by an admin) arrive here without
-      // a shop. Give them the same STARTER trial that email signup receives.
+      // a shop. Both signup methods get the same shop; the plan comes next.
       if (role === "SHOP_OWNER") {
         await ensureShopForUser({ userId: record.id, email, name: user.name ?? record.name });
       }

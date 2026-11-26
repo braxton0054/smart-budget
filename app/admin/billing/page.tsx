@@ -76,7 +76,8 @@ async function Billing() {
           <li>3. Missed callbacks are reconciled by polling; the audit log records every change.</li>
         </ol>
         <p className="mt-4 text-xs text-nt-muted">
-          Callback and polling endpoints are part of the payments phase and are not implemented yet.
+          Callback URLs are generated from <code className="rounded bg-nt-raised px-1.5 py-0.5">APP_URL</code> and the
+          stored webhook secret. Set APP_URL to the public HTTPS domain before taking live payments.
         </p>
       </Panel>
     </div>

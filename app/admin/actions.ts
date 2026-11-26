@@ -85,7 +85,8 @@ export async function savePlatformBilling(
   const key = provider === "DARAJA" ? "DARAJA_PLATFORM" : "PAYHERO_PLATFORM";
   const apiKey = String(formData.get("apiKey") ?? "").trim();
   const apiSecret = String(formData.get("apiSecret") ?? "");
-  const webhookSecret = String(formData.get("webhookSecret") ?? "");
+  const webhookSecret = String(formData.get("webhookSecret") ?? "").trim();
+  const channelIdRaw = String(formData.get("channelId") ?? "").trim();
   const shortcode = String(formData.get("shortcode") ?? "").trim();
   const passkey = String(formData.get("passkey") ?? "");
   const environment = String(formData.get("environment") ?? "sandbox");
@@ -94,6 +95,13 @@ export async function savePlatformBilling(
   if (provider !== "PAYHERO" && provider !== "DARAJA") errors.provider = "Choose a provider.";
   if (apiKey.length < 4) errors.apiKey = "Enter the API key.";
   if (apiSecret.length < 4) errors.apiSecret = "Enter the API secret.";
+  if (webhookSecret.length < 12) errors.webhookSecret = "Enter a webhook secret of at least 12 characters.";
+  if (provider === "PAYHERO") {
+    const channelId = Number(channelIdRaw);
+    if (!/^\d+$/.test(channelIdRaw) || !Number.isSafeInteger(channelId) || channelId <= 0) {
+      errors.channelId = "Enter your PayHero payment channel ID.";
+    }
+  }
   if (provider === "DARAJA") {
     if (!/^\d{4,15}$/.test(shortcode)) errors.shortcode = "Enter the M-Pesa shortcode (4–15 digits).";
     if (passkey.length < 8) errors.passkey = "Enter the Daraja passkey.";
@@ -106,7 +114,7 @@ export async function savePlatformBilling(
   const payload =
     provider === "DARAJA"
       ? { apiKey, apiSecret, webhookSecret, shortcode, passkey, environment }
-      : { apiKey, apiSecret, webhookSecret };
+      : { apiKey, apiSecret, webhookSecret, channelId: Number(channelIdRaw) };
 
   // Secrets never reach the database in plaintext and are never logged.
   const sealed = sealSecret(JSON.stringify(payload));

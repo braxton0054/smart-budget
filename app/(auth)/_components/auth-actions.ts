@@ -5,6 +5,7 @@ import bcrypt from "bcryptjs";
 import { signIn } from "@/auth";
 import { prisma } from "@/lib/prisma";
 import { ensureShopForUser } from "@/lib/shop-provisioning";
+import { isSuperadminEmail } from "@/lib/superadmin";
 import type { AuthState } from "./auth-types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -37,6 +38,9 @@ export async function signInWithEmail(_state: AuthState, formData: FormData): Pr
   if (!email || email.length > MAX_EMAIL || !EMAIL_PATTERN.test(email)) errors.email = "Enter a valid email address.";
   if (!password || password.length > MAX_PASSWORD) errors.password = "Enter your password.";
   if (Object.keys(errors).length > 0) return invalid("Check the highlighted fields and try again.", errors);
+  if (isSuperadminEmail(email)) {
+    return { status: "error", message: "That email and password don't match. Try again." };
+  }
 
   try {
     // Credential failures stay generic — never reveal which half was wrong.
@@ -58,17 +62,17 @@ export async function signUpWithEmail(_state: AuthState, formData: FormData): Pr
   if (!email || email.length > MAX_EMAIL || !EMAIL_PATTERN.test(email)) errors.email = "Enter a valid email address.";
   validatePassword(password, errors);
   if (Object.keys(errors).length > 0) return invalid("Check the highlighted fields and try again.", errors);
+  if (isSuperadminEmail(email)) {
+    return invalid("Superadmin accounts use Google sign-in.", {
+      email: "Use Google sign-in for this account.",
+    });
+  }
 
   const existing = await prisma.user.findUnique({ where: { email }, select: { id: true } });
   if (existing) {
     return invalid("An account with that email already exists. Sign in instead.", {
       email: "Use sign in for this email.",
     });
-  }
-
-  const starter = await prisma.plan.findUnique({ where: { code: "STARTER" }, select: { id: true } });
-  if (!starter) {
-    return { status: "error", message: "Plans are not seeded yet. Run npm run db:seed, then try again." };
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
@@ -97,6 +101,9 @@ export async function requestPasswordReset(_state: AuthState, formData: FormData
 
   // Always return the same message so this endpoint cannot enumerate accounts.
   const generic = "If an account exists for that email, a reset link is on its way.";
+
+  // Superadmin sign-in is Google-only; never issue a password reset for it.
+  if (isSuperadminEmail(email)) return { status: "success", message: generic };
   const user = await prisma.user.findUnique({ where: { email }, select: { id: true, name: true, passwordHash: true } });
   if (!user?.passwordHash) return { status: "success", message: generic };
 

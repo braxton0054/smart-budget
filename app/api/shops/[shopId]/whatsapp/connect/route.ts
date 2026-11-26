@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { ownedShopForApi } from "@/lib/auth-guards";
+import { entitledShopForApi } from "@/lib/auth-guards";
 import { connectShopSession, OpenwaError } from "@/lib/openwa";
 import { prisma } from "@/lib/prisma";
 
@@ -8,9 +8,10 @@ export async function POST(request: Request, { params }: { params: Promise<{ sho
     return NextResponse.json({ error: "Invalid request" }, { status: 400 });
   }
   const { shopId } = await params;
-  const owned = await ownedShopForApi(shopId);
+  const owned = await entitledShopForApi(shopId);
   if ("error" in owned) {
-    return NextResponse.json({ error: "Not allowed" }, { status: owned.error });
+    const message = "reason" in owned ? "Choose and pay for a plan before connecting WhatsApp." : "Not allowed";
+    return NextResponse.json({ error: message }, { status: owned.error });
   }
 
   const shop = await prisma.shop.findUnique({ where: { id: owned.shop.id } });

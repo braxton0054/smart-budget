@@ -166,7 +166,7 @@ export function BillingForm() {
             <option value="DARAJA">Daraja / M-Pesa</option>
           </select>
         </Field>
-        <Field id="webhookSecret" label="Webhook secret (optional)" error={error("webhookSecret")} hint="Used to verify callbacks">
+        <Field id="webhookSecret" label="Webhook secret" error={error("webhookSecret")} hint="At least 12 characters; signs the callback URL">
           <input id="webhookSecret" name="webhookSecret" type={inputType} autoComplete="off" aria-invalid={invalid("webhookSecret")} aria-describedby={described("webhookSecret")} className={inputClass} />
         </Field>
         <Field id="apiKey" label={isDaraja ? "Consumer key" : "API key"} error={error("apiKey")}>
@@ -175,6 +175,11 @@ export function BillingForm() {
         <Field id="apiSecret" label={isDaraja ? "Consumer secret" : "API secret"} error={error("apiSecret")}>
           <input id="apiSecret" name="apiSecret" type={inputType} autoComplete="off" aria-invalid={invalid("apiSecret")} aria-describedby={described("apiSecret")} className={inputClass} />
         </Field>
+        {!isDaraja && (
+          <Field id="channelId" label="PayHero channel ID" error={error("channelId")} hint="From Payment Channels in your PayHero dashboard">
+            <input id="channelId" name="channelId" inputMode="numeric" aria-invalid={invalid("channelId")} aria-describedby={described("channelId")} className={inputClass} />
+          </Field>
+        )}
         {isDaraja && (
           <>
             <Field id="shortcode" label="M-Pesa shortcode" error={error("shortcode")}>
