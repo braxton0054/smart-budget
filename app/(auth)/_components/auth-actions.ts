@@ -4,6 +4,7 @@ import { createHash, randomBytes } from "node:crypto";
 import bcrypt from "bcryptjs";
 import { signIn } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { ensureShopForUser } from "@/lib/shop-provisioning";
 import type { AuthState } from "./auth-types";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -26,15 +27,6 @@ function validatePassword(password: string, errors: NonNullable<AuthState["error
   } else if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
     errors.password = "Include at least one letter and one number.";
   }
-}
-
-function shopSlug(name: string, email: string) {
-  const base = (name || email.split("@")[0])
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "")
-    .slice(0, 30);
-  return `${base || "shop"}-${randomBytes(2).toString("hex")}`;
 }
 
 export async function signInWithEmail(_state: AuthState, formData: FormData): Promise<AuthState> {
@@ -80,27 +72,10 @@ export async function signUpWithEmail(_state: AuthState, formData: FormData): Pr
   }
 
   const passwordHash = await bcrypt.hash(password, 12);
-  await prisma.user.create({
-    data: {
-      email,
-      name,
-      passwordHash,
-      role: "SHOP_OWNER",
-      shops: {
-        create: {
-          name: `${name}'s Shop`,
-          slug: shopSlug(name, email),
-          subscriptions: {
-            create: {
-              planId: starter.id,
-              status: "TRIAL",
-              currentPeriodEnd: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000),
-            },
-          },
-        },
-      },
-    },
+  const created = await prisma.user.create({
+    data: { email, name, passwordHash, role: "SHOP_OWNER" },
   });
+  await ensureShopForUser({ userId: created.id, email, name });
   await prisma.auditLog.create({
     data: { action: "ACCOUNT_CREATED", target: email, metadata: { source: "email_signup" } },
   });

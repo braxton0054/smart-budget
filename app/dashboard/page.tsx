@@ -2,13 +2,30 @@ import type { Metadata } from "next";
 import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { connection } from "next/server";
+import { Prisma } from "@prisma/client";
 import { auth, signOut } from "@/auth";
 import { prisma } from "@/lib/prisma";
+import { ensureShopForUser } from "@/lib/shop-provisioning";
 import { money, shortDate } from "@/lib/format";
 import { toView } from "@/lib/openwa";
 import { WhatsAppPanel } from "./_components/whatsapp-panel";
 
 export const metadata: Metadata = { title: "Dashboard" };
+
+const shopInclude = {
+  shops: {
+    include: {
+      waSessions: true,
+      products: true,
+      customers: true,
+      orders: {
+        orderBy: { createdAt: "desc" },
+        take: 5,
+        include: { customer: { select: { phone: true, name: true } } },
+      },
+    },
+  },
+} satisfies Prisma.UserInclude;
 
 async function DashboardContent() {
   await connection();
@@ -18,24 +35,17 @@ async function DashboardContent() {
     redirect("/admin");
   }
 
-  const user = await prisma.user.findUnique({
-    where: { email: session.user.email.toLowerCase() },
-    include: {
-      shops: {
-        include: {
-          waSessions: true,
-          products: true,
-          customers: true,
-          orders: {
-            orderBy: { createdAt: "desc" },
-            take: 5,
-            include: { customer: { select: { phone: true, name: true } } },
-          },
-        },
-      },
-    },
-  });
+  const email = session.user.email.toLowerCase();
+  let user = await prisma.user.findUnique({ where: { email }, include: shopInclude });
   if (!user) redirect("/login");
+
+  // Self-heal owners who signed in before shop provisioning was wired up.
+  // ensureShopForUser is idempotent, so repeat dashboard loads are harmless.
+  if (user.shops.length === 0) {
+    await ensureShopForUser({ userId: user.id, email: user.email, name: user.name });
+    user = await prisma.user.findUnique({ where: { email }, include: shopInclude });
+    if (!user) redirect("/login");
+  }
 
   const shop = user.shops[0];
 
@@ -66,8 +76,10 @@ async function DashboardContent() {
 
         {!shop ? (
           <div className="mt-10 rounded-xl border border-nt-line bg-nt-surface p-8 text-center">
-            <h1 className="font-display text-2xl font-semibold">No shop yet</h1>
-            <p className="mt-2 text-sm text-nt-muted">Create an account with email and password to get a shop, or contact the platform owner.</p>
+            <h1 className="font-display text-2xl font-semibold">Shop setup incomplete</h1>
+            <p className="mt-2 text-sm text-nt-muted">
+              Your shop could not be created because the Starter plan is not configured. Contact support or run <code className="rounded bg-nt-raised px-1.5 py-0.5">npm run db:seed</code>.
+            </p>
           </div>
         ) : (
           <>
