@@ -1,26 +1,101 @@
 @import "tailwindcss";
 
+/* Neon Tokyo — canonical tokens. See DESIGN.md at the project root. */
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  color-scheme: dark;
+
+  --nt-void: #070a13;
+  --nt-surface: #0e1424;
+  --nt-raised: #151d30;
+  --nt-line: #26334d;
+  --nt-ink: #f2f6ff;
+  --nt-muted: #9ba9c4;
+  --nt-cyan: #22e6ff;
+  --nt-magenta: #ff3fb4;
+  --nt-violet: #8b7cff;
+  --nt-on-neon: #04121a;
+  --nt-danger: #ff6b8a;
+  --nt-success: #3ce6a5;
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-nt-void: var(--nt-void);
+  --color-nt-surface: var(--nt-surface);
+  --color-nt-raised: var(--nt-raised);
+  --color-nt-line: var(--nt-line);
+  --color-nt-ink: var(--nt-ink);
+  --color-nt-muted: var(--nt-muted);
+  --color-nt-cyan: var(--nt-cyan);
+  --color-nt-magenta: var(--nt-magenta);
+  --color-nt-violet: var(--nt-violet);
+  --color-nt-on-neon: var(--nt-on-neon);
+  --color-nt-danger: var(--nt-danger);
+  --color-nt-success: var(--nt-success);
+
+  --font-display: var(--font-chakra-petch);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  min-height: 100%;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--nt-void);
+  color: var(--nt-ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Browser surfaces belong to the design too. */
+::selection {
+  background: color-mix(in oklab, var(--nt-cyan) 32%, transparent);
+  color: var(--nt-ink);
+}
+
+input,
+textarea,
+button {
+  caret-color: var(--nt-cyan);
+}
+
+:focus-visible {
+  outline: 2px solid var(--nt-cyan);
+  outline-offset: 3px;
+}
+
+* {
+  scrollbar-color: var(--nt-line) var(--nt-void);
+}
+
+/* One authored moment on the brand panel; no scattered entrances. */
+@keyframes nt-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(0.75rem);
+    filter: blur(6px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+.nt-reveal {
+  animation: nt-reveal 720ms cubic-bezier(0.2, 0.7, 0.2, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nt-reveal {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    transition-duration: 0.01ms !important;
+  }
 }

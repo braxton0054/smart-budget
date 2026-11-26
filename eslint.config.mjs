@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Vendored third-party gateway — linted by its own project, not by this app.
+    "wa-worker/**",
   ]),
 ]);
 

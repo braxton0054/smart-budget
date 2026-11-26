@@ -1,0 +1,501 @@
+// Smart Budget data model. Every tenant table carries shopId for isolation.
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  SUPERADMIN
+  SHOP_OWNER
+  CUSTOMER
+}
+
+enum SubscriptionStatus {
+  TRIAL
+  ACTIVE
+  GRACE
+  PAST_DUE
+  CANCELLED
+}
+
+enum WaSessionStatus {
+  CONNECTING
+  CONNECTED
+  DISCONNECTED
+  BANNED
+}
+
+enum PaymentProvider {
+  PAYHERO
+  DARAJA
+}
+
+enum PaymentStatus {
+  PENDING
+  PAID
+  FAILED
+  REVERSED
+}
+
+enum OrderStatus {
+  PENDING
+  CONFIRMED
+  PAID
+  PREPARING
+  DELIVERED
+  CANCELLED
+}
+
+enum BookingStatus {
+  PENDING
+  CONFIRMED
+  COMPLETED
+  CANCELLED
+}
+
+enum MessageRole {
+  CUSTOMER
+  AGENT
+  OWNER
+  SYSTEM
+}
+
+enum DeliveryStatus {
+  PENDING
+  IN_TRANSIT
+  DELIVERED
+  FAILED
+}
+
+enum BroadcastStatus {
+  QUEUED
+  SENDING
+  SENT
+  FAILED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  name         String?
+  image        String?
+  googleId     String?  @unique
+  passwordHash String?
+  role         UserRole @default(SHOP_OWNER)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  shops               Shop[]               @relation("ShopOwner")
+  auditLogs           AuditLog[]
+  passwordResetTokens PasswordResetToken[]
+}
+
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Plan {
+  id           String   @id @default(cuid())
+  code         String   @unique
+  name         String
+  priceMonthly Int
+  maxProducts  Int
+  maxMessages  Int
+  maxSessions  Int
+  tokenCap     Int
+  graceDays    Int      @default(7)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  subscriptions ShopSubscription[]
+}
+
+model Shop {
+  id             String   @id @default(cuid())
+  name           String
+  slug           String   @unique
+  ownerId        String
+  whatsappNumber String?
+  currency       String   @default("KES")
+  maxOrderAmount Int      @default(50000)
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner              User                @relation("ShopOwner", fields: [ownerId], references: [id])
+  subscriptions      ShopSubscription[]
+  waSessions         WaSession[]
+  paymentCredential  PaymentCredential[]
+  products           Product[]
+  variants           ProductVariant[]
+  services           Service[]
+  bookings           Booking[]
+  customers          Customer[]
+  conversations      Conversation[]
+  messages           Message[]
+  orders             Order[]
+  orderItems         OrderItem[]
+  invoices           Invoice[]
+  payments           Payment[]
+  deliveries         Delivery[]
+  alertSubscriptions AlertSubscription[]
+  broadcasts         Broadcast[]
+  auditLogs          AuditLog[]
+
+  @@index([ownerId])
+}
+
+model ShopSubscription {
+  id                 String             @id @default(cuid())
+  shopId             String
+  planId             String
+  status             SubscriptionStatus @default(TRIAL)
+  currentPeriodStart DateTime           @default(now())
+  currentPeriodEnd   DateTime
+  messagesUsed       Int                @default(0)
+  tokensUsed         Int                @default(0)
+  createdAt          DateTime           @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  plan Plan @relation(fields: [planId], references: [id])
+
+  @@index([shopId])
+  @@index([status])
+}
+
+// One isolated OpenWA session per shop. The gateway admin key lives only in the
+// environment; each shop gets its own session-scoped API key and webhook secret,
+// both sealed with AES-256-GCM before they are written here.
+model WaSession {
+  id          String          @id @default(cuid())
+  shopId      String
+  phoneNumber String?
+  status      WaSessionStatus @default(CONNECTING)
+  qrCode      String?
+  lastSeenAt  DateTime?
+  connectedAt DateTime?
+  createdAt   DateTime        @default(now())
+  updatedAt   DateTime        @updatedAt
+
+  // OpenWA identity and credentials (ciphertext/iv/authTag are base64 strings).
+  openwaSessionId String? @unique
+  apiKeyId        String?
+  apiKeyCiphertext String?
+  apiKeyIv         String?
+  apiKeyAuthTag    String?
+  webhookId        String?
+  webhookTokenHash String? @unique
+  webhookSecretCiphertext String?
+  webhookSecretIv         String?
+  webhookSecretAuthTag    String?
+
+  // Encrypted Baileys multi-file auth state, mirrored from the shared volume
+  // into Postgres by the wa-state-sync sidecar.
+  stateCiphertext String?
+  stateIv         String?
+  stateAuthTag    String?
+  stateFingerprint String?
+  stateUpdatedAt  DateTime?
+
+  // Last status observed from the gateway and any engine-side restriction.
+  openwaStatus String?
+  lastError    String?
+  restriction  String?
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, phoneNumber])
+  @@index([shopId, status])
+}
+
+// Platform-level keys used to collect owner subscription payments.
+// Distinct from PaymentCredential, which holds each shop's payout keys.
+model PlatformCredential {
+  id        String   @id @default(cuid())
+  key       String   @unique
+  ciphertext String
+  iv        String
+  authTag   String
+  isActive  Boolean  @default(true)
+  updatedAt DateTime @updatedAt
+}
+
+model PaymentCredential {
+  id         String          @id @default(cuid())
+  shopId     String          @unique
+  provider   PaymentProvider
+  // AES-GCM output: ciphertext, iv and authTag are base64 strings.
+  ciphertext String
+  iv         String
+  authTag    String
+  isActive   Boolean         @default(true)
+  createdAt  DateTime        @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+}
+
+model Product {
+  id          String   @id @default(cuid())
+  shopId      String
+  name        String
+  description String?
+  sku         String?
+  price       Int
+  currency    String   @default("KES")
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+
+  shop       Shop             @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  variants   ProductVariant[]
+  orderItems OrderItem[]
+
+  @@unique([shopId, sku])
+  @@index([shopId])
+}
+
+model ProductVariant {
+  id        String  @id @default(cuid())
+  shopId    String
+  productId String
+  name      String
+  sku       String?
+  price     Int
+  stock     Int     @default(0)
+
+  shop       Shop        @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  product    Product     @relation(fields: [productId], references: [id], onDelete: Cascade)
+  orderItems OrderItem[]
+
+  @@unique([shopId, sku])
+  @@index([productId])
+}
+
+model Service {
+  id              String  @id @default(cuid())
+  shopId          String
+  name            String
+  description     String?
+  durationMinutes Int     @default(60)
+  price           Int
+  isActive        Boolean @default(true)
+
+  shop     Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  bookings Booking[]
+
+  @@index([shopId])
+}
+
+model Booking {
+  id         String        @id @default(cuid())
+  shopId     String
+  customerId String
+  serviceId  String
+  startsAt   DateTime
+  endsAt     DateTime
+  status     BookingStatus @default(PENDING)
+  createdAt  DateTime      @default(now())
+
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id])
+  service  Service  @relation(fields: [serviceId], references: [id])
+
+  @@index([shopId, startsAt])
+}
+
+model Customer {
+  id            String   @id @default(cuid())
+  shopId        String
+  phone         String
+  name          String?
+  email         String?
+  optedInAlerts Boolean  @default(false)
+  createdAt     DateTime @default(now())
+
+  shop               Shop                @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  conversations      Conversation[]
+  bookings           Booking[]
+  orders             Order[]
+  alertSubscriptions AlertSubscription[]
+
+  @@unique([shopId, phone])
+  @@index([shopId])
+}
+
+model Conversation {
+  id            String   @id @default(cuid())
+  shopId        String
+  customerId    String
+  status        String   @default("OPEN")
+  lastMessageAt DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  shop     Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customer Customer  @relation(fields: [customerId], references: [id])
+  messages Message[]
+  orders   Order[]
+
+  @@index([shopId, lastMessageAt])
+}
+
+model Message {
+  id             String      @id @default(cuid())
+  shopId         String
+  conversationId String
+  role           MessageRole
+  body           String
+  externalId     String?
+  createdAt      DateTime    @default(now())
+
+  shop         Shop         @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  conversation Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId, createdAt])
+}
+
+model Order {
+  id              String      @id @default(cuid())
+  shopId          String
+  customerId      String
+  conversationId  String?
+  status          OrderStatus @default(PENDING)
+  total           Int
+  currency        String      @default("KES")
+  deliveryAddress String?
+  createdAt       DateTime    @default(now())
+
+  shop         Shop          @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customer     Customer      @relation(fields: [customerId], references: [id])
+  conversation Conversation? @relation(fields: [conversationId], references: [id])
+  items        OrderItem[]
+  invoice      Invoice?
+  payments     Payment[]
+  delivery     Delivery?
+
+  @@index([shopId, createdAt])
+}
+
+model OrderItem {
+  id        String  @id @default(cuid())
+  shopId    String
+  orderId   String
+  productId String?
+  variantId String?
+  name      String
+  quantity  Int
+  unitPrice Int
+
+  shop    Shop            @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  order   Order           @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  product Product?        @relation(fields: [productId], references: [id])
+  variant ProductVariant? @relation(fields: [variantId], references: [id])
+
+  @@index([orderId])
+}
+
+model Invoice {
+  id       String    @id @default(cuid())
+  shopId   String
+  orderId  String    @unique
+  number   String    @unique
+  total    Int
+  issuedAt DateTime  @default(now())
+  dueAt    DateTime?
+
+  shop     Shop      @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  order    Order     @relation(fields: [orderId], references: [id], onDelete: Cascade)
+  payments Payment[]
+
+  @@index([shopId])
+}
+
+model Payment {
+  id              String          @id @default(cuid())
+  shopId          String
+  orderId         String?
+  invoiceId       String?
+  provider        PaymentProvider
+  providerRef     String?
+  amount          Int
+  status          PaymentStatus   @default(PENDING)
+  callbackPayload Json?
+  createdAt       DateTime        @default(now())
+  confirmedAt     DateTime?
+
+  shop    Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  order   Order?   @relation(fields: [orderId], references: [id])
+  invoice Invoice? @relation(fields: [invoiceId], references: [id])
+
+  @@index([shopId, createdAt])
+  @@index([providerRef])
+}
+
+model Delivery {
+  id           String         @id @default(cuid())
+  shopId       String
+  orderId      String         @unique
+  address      String
+  status       DeliveryStatus @default(PENDING)
+  trackingCode String?
+  updatedAt    DateTime       @updatedAt
+
+  shop  Shop  @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  order Order @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  @@index([shopId])
+}
+
+model AlertSubscription {
+  id         String   @id @default(cuid())
+  shopId     String
+  customerId String
+  productId  String?
+  createdAt  DateTime @default(now())
+
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, customerId, productId])
+}
+
+model Broadcast {
+  id             String          @id @default(cuid())
+  shopId         String
+  message        String
+  status         BroadcastStatus @default(QUEUED)
+  recipientCount Int             @default(0)
+  sentAt         DateTime?
+  createdAt      DateTime        @default(now())
+
+  shop Shop @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@index([shopId, createdAt])
+}
+
+model AuditLog {
+  id        String   @id @default(cuid())
+  shopId    String?
+  actorId   String?
+  action    String
+  target    String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  shop  Shop? @relation(fields: [shopId], references: [id], onDelete: SetNull)
+  actor User? @relation(fields: [actorId], references: [id], onDelete: SetNull)
+
+  @@index([shopId, createdAt])
+  @@index([actorId, createdAt])
+}

@@ -1,0 +1,118 @@
+services:
+  postgres:
+    image: postgres:16.4-alpine
+    container_name: smartbudget-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: smartbudget
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: smartbudget
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U smartbudget -d smartbudget"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+  redis:
+    image: redis:7.4-alpine
+    container_name: smartbudget-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "noeviction"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true
+
+  # Mirrors each session's on-disk Baileys credentials into Postgres as AES-GCM
+  # ciphertext. Restores them before OpenWA boots, then watches for changes.
+  wa-state-sync:
+    build: ./wa-state-sync
+    container_name: smartbudget-wa-state-sync
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://smartbudget:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/smartbudget?schema=public
+      CREDENTIALS_ENCRYPTION_KEY: ${CREDENTIALS_ENCRYPTION_KEY:?set CREDENTIALS_ENCRYPTION_KEY in .env}
+      STATE_SYNC_INTERVAL_MS: 10000
+    volumes:
+      - openwa-auth:/data/baileys
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "process.exit(require('fs').existsSync('/tmp/restore-complete') ? 0 : 1)"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+    security_opt:
+      - no-new-privileges:true
+
+  # OpenWA — separate WhatsApp session gateway. Never runs inside the Next.js process.
+  openwa:
+    image: ghcr.io/rmyndharis/openwa:0.32.1
+    container_name: smartbudget-openwa
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:${OPENWA_PORT:-2785}:2785"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      NODE_ENV: production
+      PORT: 2785
+      DATABASE_TYPE: postgres
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: openwa
+      DATABASE_USERNAME: smartbudget
+      DATABASE_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      DATABASE_SYNCHRONIZE: "false"
+      REDIS_ENABLED: "true"
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      QUEUE_ENABLED: "true"
+      QUEUE_PREFIX: smartbudget-openwa
+      ENGINE_TYPE: ${OPENWA_ENGINE:-baileys}
+      # First-boot bootstrap key. On an existing volume OpenWA keeps its stored
+      # key; rotate through its API instead of changing this value.
+      API_MASTER_KEY: ${OPENWA_ADMIN_API_KEY:?set OPENWA_ADMIN_API_KEY in .env}
+      # The state sync sidecar restores encrypted credentials first; the app
+      # starts each session explicitly after the owner asks to connect.
+      AUTO_START_SESSIONS: "false"
+      STORAGE_TYPE: local
+      STORAGE_LOCAL_PATH: /app/data/media
+      SESSION_DATA_PATH: /app/data/sessions
+      BAILEYS_AUTH_DIR: /app/data/baileys
+      # Permit the gateway to deliver signed webhooks back to the host app.
+      SSRF_ALLOWED_HOSTS: ${OPENWA_WEBHOOK_HOST:-host.docker.internal}
+      API_KEY_PEPPER: ${OPENWA_API_KEY_PEPPER:-}
+    volumes:
+      - openwa-data:/app/data
+      - openwa-auth:/app/data/baileys
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      wa-state-sync:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  postgres-data:
+  redis-data:
+  openwa-data:
+  openwa-auth:

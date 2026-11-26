@@ -1,0 +1,3 @@
+[submodule "wa-worker"]
+	path = wa-worker
+	url = https://github.com/rmyndharis/OpenWA.git

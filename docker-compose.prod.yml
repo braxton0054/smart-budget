@@ -1,0 +1,84 @@
+# Production overlay: run with
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+#
+# Infrastructure is kept on the Compose network only. The Next.js app is the
+# single public entry point, and it depends on Postgres, Redis, the encrypted
+# state sidecar and OpenWA being healthy before it serves traffic.
+services:
+  postgres:
+    ports: !reset []
+
+  redis:
+    ports: !reset []
+
+  openwa:
+    ports: !reset []
+    environment:
+      # Seeds the bootstrap admin key on a fresh OpenWA volume. Keep it stable;
+      # per-shop keys are minted at runtime and stored encrypted in Postgres.
+      API_MASTER_KEY: ${OPENWA_ADMIN_API_KEY:?set OPENWA_ADMIN_API_KEY in .env}
+      # The gateway calls the web service over the internal network.
+      SSRF_ALLOWED_HOSTS: ${OPENWA_SSRF_ALLOWED_HOSTS:-web}
+    healthcheck:
+      test: ["CMD-SHELL", "curl -f http://localhost:2785/api/health/ready || exit 1"]
+      interval: 10s
+      timeout: 5s
+      start_period: 30s
+      retries: 12
+
+  migrate:
+    build:
+      context: .
+      target: migrator
+    container_name: smartbudget-migrate
+    restart: "no"
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://smartbudget:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/smartbudget?schema=public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+  web:
+    build:
+      context: .
+      target: runner
+      args:
+        NEXT_PUBLIC_APP_URL: ${NEXT_PUBLIC_APP_URL:?set NEXT_PUBLIC_APP_URL in .env}
+    container_name: smartbudget-web
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgresql://smartbudget:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/smartbudget?schema=public
+      REDIS_URL: redis://redis:6379
+      OPENWA_URL: http://openwa:2785
+      # Reachable from the OpenWA container; public browser URL stays in APP_URL.
+      OPENWA_CALLBACK_URL: ${OPENWA_PRODUCTION_CALLBACK_URL:-http://web:3000}
+      HOSTNAME: 0.0.0.0
+      PORT: 3000
+    ports:
+      - "${APP_PORT:-3000}:3000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+      openwa:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r) => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 15s
+      timeout: 5s
+      start_period: 20s
+      retries: 12
+    security_opt:
+      - no-new-privileges:true

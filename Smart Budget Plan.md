@@ -56,3 +56,5 @@ A multi-shop SaaS where shop owners connect WhatsApp and an AI sales agent sells
 ## Next Step
 
 Write the full Postgres schema, or scaffold the repo and `docker-compose.yml`.
+ mulipule open ai live openai api key lives on .env
+ google authi for sing/ sinup or email or pasword, then resend for all platfrom email
