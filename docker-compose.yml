@@ -1,0 +1,86 @@
+# Run on the VPS with:  docker compose up -d --build
+# Settings come from the .env beside this file (see deploy.example.env).
+#
+# NOTE: nothing in this file is started yet. It is staged here so the first
+# deploy is a single command. Host TLS is terminated by the system Caddy; see
+# deploy/smartbudget.caddy.
+
+name: smartbudget
+
+services:
+  # Phase 1 of "Smart Budget Plan.md" needs Postgres. The image stores data in
+  # /var/lib/postgresql (not /var/lib/postgresql/data) on Postgres 18+, so a
+  # future pg_upgrade --link stays possible.
+  db:
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+    volumes:
+      - db-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # BullMQ broker for the WhatsApp/agent workers planned in phase 3.
+  # AOF keeps queued jobs through a Redis restart.
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  app:
+    build:
+      context: .
+      target: runner
+      args:
+        NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+    image: ${APP_IMAGE:-smartbudget-app:latest}
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      NEXT_PUBLIC_SITE_URL: ${NEXT_PUBLIC_SITE_URL:-}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}?schema=public
+      REDIS_URL: redis://redis:6379
+      # Filled in when the corresponding phases land; safe to leave empty now.
+      APP_ENCRYPTION_KEY: ${APP_ENCRYPTION_KEY:-}
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      PAYHERO_USERNAME: ${PAYHERO_USERNAME:-}
+      PAYHERO_API_KEY: ${PAYHERO_API_KEY:-}
+    # Caddy on the host proxies to 127.0.0.1:3012. Binding to loopback keeps
+    # the app off the public IP directly.
+    ports:
+      - "127.0.0.1:${APP_PORT:-3012}:3000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/api/health').then((r)=>process.exit(r.ok?0:1),()=>process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+# wa-worker and agent-worker get services here in phases 3-4, when the code
+# exists. Do not run WhatsApp sessions inside this Next.js process.
+
+volumes:
+  db-data:
+  redis-data:

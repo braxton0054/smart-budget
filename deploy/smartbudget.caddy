@@ -1,0 +1,15 @@
+# Smart Budget — public entry point.
+#
+# On the VPS, copy this file to /etc/caddy/sites/smartbudget.caddy and then run:
+#   caddy reload --config /etc/caddy/Caddyfile
+#
+# DNS is already in place: smartbudget.mtandaolabs.com A -> 185.208.207.239,
+# grey-cloud (DNS only). Keep it grey-cloud: Caddy needs HTTP-01 to issue the
+# certificate, and Cloudflare's proxy would intercept the challenge.
+#
+# NOT applied yet — this file is staged only.
+
+smartbudget.mtandaolabs.com {
+	encode zstd gzip
+	reverse_proxy 127.0.0.1:3012
+}
