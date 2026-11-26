@@ -11,6 +11,7 @@
     "prod:down": "docker compose -f docker-compose.yml -f docker-compose.prod.yml down",
     "prod:ps": "docker compose -f docker-compose.yml -f docker-compose.prod.yml ps",
     "prod:logs": "docker compose -f docker-compose.yml -f docker-compose.prod.yml logs -f",
+    "env:check": "NODE_OPTIONS=--dns-result-order=ipv4first node scripts/check-env.mjs",
     "dev": "NODE_OPTIONS=--dns-result-order=ipv4first next dev",
     "build": "NODE_OPTIONS=--dns-result-order=ipv4first next build",
     "start": "NODE_OPTIONS=--dns-result-order=ipv4first next start",
