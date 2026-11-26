@@ -1,0 +1,39 @@
+name: CI
+
+# Verification only. This workflow never touches the VPS.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      # Build-time placeholders only. No live secrets are needed for CI.
+      DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci?schema=public
+      NEXT_PUBLIC_APP_URL: https://ci.example.test
+      SESSION_SECRET: ci-only-not-a-real-secret
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --no-audit --no-fund
+      - run: npx prisma validate
+      - run: npm run lint
+      # `next build` type-checks and generates the route types that `tsc`
+      # needs (e.g. LayoutProps), so it must run before the standalone check.
+      - name: Build
+        run: npm run build
+      - name: Typecheck
+        run: npx tsc --noEmit
+      - name: Verify production images build
+        run: |
+          docker build --target runner -t smartbudget-ci:${{ github.sha }} .
+          docker build --target migrator -t smartbudget-migrate-ci:${{ github.sha }} .
