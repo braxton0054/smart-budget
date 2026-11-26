@@ -1,0 +1,91 @@
+# INACTIVE ON PURPOSE — GitHub ignores files that don't end in .yml.
+# Rename to deploy.yml only when you want automatic deploys on green CI.
+#
+# Requirements before activating:
+#   1. A repository-level self-hosted runner on the VPS with labels
+#      [self-hosted, eavi-vps]. The existing runner only serves eavi1-app.
+#   2. /root/smart-budget cloned on the VPS with a filled-in .env.
+#   3. /etc/caddy/sites/smartbudget.caddy installed and Caddy reloaded.
+
+name: Deploy
+
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Commit to deploy (defaults to origin/main)
+        required: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-smartbudget-production
+  cancel-in-progress: false
+
+env:
+  DEPLOY_PATH: /root/smart-budget
+  PUBLIC_HOST: smartbudget.mtandaolabs.com
+  COMPOSE_FILES: -f docker-compose.yml -f docker-compose.prod.yml
+
+jobs:
+  deploy:
+    name: Rebuild and restart on the VPS
+    runs-on: [self-hosted, eavi-vps]
+    timeout-minutes: 30
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+    steps:
+      - name: Resolve target commit
+        id: target
+        run: |
+          if [ -n "${{ github.event.inputs.sha }}" ]; then
+            echo "sha=${{ github.event.inputs.sha }}" >> "$GITHUB_OUTPUT"
+          elif [ "${{ github.event_name }}" = "workflow_run" ]; then
+            echo "sha=${{ github.event.workflow_run.head_sha }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "sha=$(git -C "$DEPLOY_PATH" rev-parse origin/main)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Sync the deployment to that commit
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -eu
+          cd "$DEPLOY_PATH"
+          # .env is untracked, so it survives the reset.
+          git -c credential.helper='!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f' \
+            fetch --prune origin main
+          git reset --hard "${{ steps.target.outputs.sha }}"
+          echo "deploying $(git rev-parse --short HEAD) — $(git log -1 --pretty=%s)"
+
+      - name: Rebuild and restart the stack
+        run: |
+          set -eu
+          cd "$DEPLOY_PATH"
+          docker compose $COMPOSE_FILES up -d --build
+
+      - name: Wait for health
+        run: |
+          set -eu
+          for i in $(seq 1 40); do
+            if curl -fsS --max-time 10 "https://$PUBLIC_HOST/api/health" >/dev/null 2>&1; then
+              echo "healthy after ${i} attempts"
+              curl -fsS --max-time 10 "https://$PUBLIC_HOST/api/health"
+              echo
+              exit 0
+            fi
+            sleep 5
+          done
+          echo "::error::health check never came back on https://$PUBLIC_HOST"
+          docker compose $COMPOSE_FILES logs --tail=80 || true
+          exit 1
+
+      - name: Report the running revision
+        run: |
+          cd "$DEPLOY_PATH"
+          echo "commit: $(git rev-parse HEAD)"
+          docker compose $COMPOSE_FILES ps --format '{{.Service}} {{.Status}}'
